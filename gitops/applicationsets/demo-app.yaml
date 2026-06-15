@@ -1,0 +1,50 @@
+# ApplicationSet — deploys gitops-demo to every cluster in the `elements` list.
+# Harness registers each cluster with the GitOps Agent; Argo CD reconciles the rest.
+#
+# Apply this to the Argo CD namespace on the management cluster:
+#   kubectl apply -f gitops/applicationsets/demo-app.yaml -n argocd
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gitops-demo
+  namespace: argocd
+spec:
+  # The List generator creates one Application per element below.
+  # To add a cluster, append an element and register the cluster in Harness.
+  generators:
+    - list:
+        elements:
+          - env: dev
+            cluster: dev-cluster
+            server: https://dev-k8s.example.com   # replace with real dev API endpoint
+          - env: production
+            cluster: prod-cluster
+            server: https://prod-k8s.example.com  # replace with real prod API endpoint
+
+  template:
+    metadata:
+      name: "gitops-demo-{{env}}"
+      labels:
+        app: gitops-demo
+        env: "{{env}}"
+      annotations:
+        # Links this Application back to Harness for status propagation
+        harness.io/service-ref: gitops-demo-service
+        harness.io/environment-ref: "{{env}}"
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/your-org/gitops-example.git  # replace with real repo URL
+        targetRevision: HEAD
+        path: "gitops/overlays/{{env}}"
+      destination:
+        server: "{{server}}"
+        namespace: "gitops-demo-{{env}}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - PrunePropagationPolicy=foreground
+          - ApplyOutOfSyncOnly=true

@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitops-demo
+spec:
+  template:
+    spec:
+      containers:
+        - name: gitops-demo
+          env:
+            - name: ENVIRONMENT
+              value: dev
+            - name: APP_VERSION
+              # Kept in sync with images[].newTag above
+              value: "latest"

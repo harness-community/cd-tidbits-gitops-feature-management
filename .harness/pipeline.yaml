@@ -1,0 +1,229 @@
+# Harness GitOps Pipeline — gitops-demo
+#
+# Flow:  Build & Push  →  Deploy Dev  →  Manual Approval  →  Promote to Prod
+#
+# Before importing, update every <REPLACE_*> placeholder with your own
+# connector/environment/cluster identifiers from your Harness account.
+#
+# Connector requirements:
+#   - REPLACE_GITHUB_CONNECTOR   : GitHub connector with repo access
+#   - REPLACE_DOCKER_CONNECTOR   : Docker Hub (or ECR/GCR) connector
+#   - REPLACE_K8S_BUILD_CONNECTOR: Kubernetes connector for CI build infrastructure
+
+pipeline:
+  name: gitops-demo
+  identifier: gitops_demo
+  orgIdentifier: default
+  projectIdentifier: default
+  description: >
+    Builds the gitops-demo image, deploys to dev via Argo CD,
+    awaits manual approval, then promotes the same tag to production.
+  tags:
+    app: gitops-demo
+  properties:
+    ci:
+      codebase:
+        connectorRef: REPLACE_GITHUB_CONNECTOR
+        repoName: your-org/gitops-example
+        build: <+input>
+
+  stages:
+    # ─────────────────────────────────────────────────────────────
+    # Stage 1 — Build & Push Docker image
+    # ─────────────────────────────────────────────────────────────
+    - stage:
+        name: Build and Push
+        identifier: build_and_push
+        type: CI
+        spec:
+          cloneCodebase: true
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: REPLACE_K8S_BUILD_CONNECTOR
+              namespace: harness-build
+          execution:
+            steps:
+              - step:
+                  name: Build and Push to Docker Hub
+                  identifier: build_push_docker
+                  type: BuildAndPushDockerRegistry
+                  spec:
+                    connectorRef: REPLACE_DOCKER_CONNECTOR
+                    repo: your-org/gitops-demo
+                    context: app/
+                    dockerfile: app/Dockerfile
+                    tags:
+                      # Tag with the pipeline sequence ID for traceability
+                      - <+pipeline.sequenceId>
+                      - latest
+                  # Expose the image tag for downstream stages
+                  outputVariables:
+                    - name: IMAGE_TAG
+                      value: <+pipeline.sequenceId>
+                      type: String
+
+    # ─────────────────────────────────────────────────────────────
+    # Stage 2 — Deploy to Dev (GitOps)
+    # ─────────────────────────────────────────────────────────────
+    - stage:
+        name: Deploy Dev
+        identifier: deploy_dev
+        type: CD
+        dependsOn:
+          - build_and_push
+        spec:
+          deploymentType: Kubernetes
+          gitOpsEnabled: true
+          service:
+            serviceRef: gitops_demo_service
+            serviceInputs:
+              serviceDefinition:
+                type: Kubernetes
+                spec:
+                  artifacts:
+                    primary:
+                      primaryArtifactRef: primary
+                      sources:
+                        - identifier: primary
+                          type: DockerRegistry
+                          spec:
+                            connectorRef: REPLACE_DOCKER_CONNECTOR
+                            imagePath: your-org/gitops-demo
+                            tag: <+pipeline.stages.build_and_push.spec.execution.steps.build_push_docker.output.outputVariables.IMAGE_TAG>
+          environment:
+            environmentRef: dev
+            deployToAll: false
+            gitOpsClusters:
+              - identifier: REPLACE_DEV_CLUSTER_IDENTIFIER
+          execution:
+            steps:
+              # 1. Patch gitops/overlays/dev/kustomization.yaml with the new image tag
+              - step:
+                  name: Update Release Repo (Dev)
+                  identifier: update_release_repo_dev
+                  type: GitOpsUpdateReleaseRepo
+                  timeout: 10m
+                  spec:
+                    variables:
+                      - name: IMAGE_TAG
+                        value: <+pipeline.stages.build_and_push.spec.execution.steps.build_push_docker.output.outputVariables.IMAGE_TAG>
+                        type: String
+              # 2. Merge the PR that the previous step created
+              - step:
+                  name: Merge PR (Dev)
+                  identifier: merge_pr_dev
+                  type: MergePR
+                  timeout: 10m
+                  spec:
+                    deleteSourceBranch: true
+              # 3. Discover the Argo CD Application(s) linked to the dev environment
+              - step:
+                  name: Fetch Linked Apps (Dev)
+                  identifier: fetch_linked_apps_dev
+                  type: GitOpsFetchLinkedApps
+                  timeout: 10m
+              # 4. Sync the Argo CD Application and wait for steady state
+              - step:
+                  name: Sync GitOps App (Dev)
+                  identifier: gitops_sync_dev
+                  type: GitOpsSync
+                  timeout: 20m
+                  spec:
+                    waitForSteadyState: true
+
+    # ─────────────────────────────────────────────────────────────
+    # Stage 3 — Manual Approval gate before production
+    # ─────────────────────────────────────────────────────────────
+    - stage:
+        name: Approve Production Promotion
+        identifier: approve_prod
+        type: Approval
+        dependsOn:
+          - deploy_dev
+        spec:
+          execution:
+            steps:
+              - step:
+                  name: Approve
+                  identifier: approve
+                  type: HarnessApproval
+                  timeout: 1d
+                  spec:
+                    approvalMessage: |
+                      Please verify the dev deployment before promoting to production.
+
+                      Image: your-org/gitops-demo:<+pipeline.stages.build_and_push.spec.execution.steps.build_push_docker.output.outputVariables.IMAGE_TAG>
+                      Dev endpoint: http://gitops-demo.gitops-demo-dev.svc.cluster.local
+                    includePipelineExecutionHistory: true
+                    approvers:
+                      minimumCount: 1
+                      disallowPipelineExecutor: false
+                      userGroups:
+                        - REPLACE_APPROVER_USER_GROUP
+                    approverInputs: []
+
+    # ─────────────────────────────────────────────────────────────
+    # Stage 4 — Promote to Production (GitOps)
+    # ─────────────────────────────────────────────────────────────
+    - stage:
+        name: Deploy Production
+        identifier: deploy_prod
+        type: CD
+        dependsOn:
+          - approve_prod
+        spec:
+          deploymentType: Kubernetes
+          gitOpsEnabled: true
+          service:
+            serviceRef: gitops_demo_service
+            serviceInputs:
+              serviceDefinition:
+                type: Kubernetes
+                spec:
+                  artifacts:
+                    primary:
+                      primaryArtifactRef: primary
+                      sources:
+                        - identifier: primary
+                          type: DockerRegistry
+                          spec:
+                            connectorRef: REPLACE_DOCKER_CONNECTOR
+                            imagePath: your-org/gitops-demo
+                            tag: <+pipeline.stages.build_and_push.spec.execution.steps.build_push_docker.output.outputVariables.IMAGE_TAG>
+          environment:
+            environmentRef: production
+            deployToAll: false
+            gitOpsClusters:
+              - identifier: REPLACE_PROD_CLUSTER_IDENTIFIER
+          execution:
+            steps:
+              - step:
+                  name: Update Release Repo (Production)
+                  identifier: update_release_repo_prod
+                  type: GitOpsUpdateReleaseRepo
+                  timeout: 10m
+                  spec:
+                    variables:
+                      - name: IMAGE_TAG
+                        value: <+pipeline.stages.build_and_push.spec.execution.steps.build_push_docker.output.outputVariables.IMAGE_TAG>
+                        type: String
+              - step:
+                  name: Merge PR (Production)
+                  identifier: merge_pr_prod
+                  type: MergePR
+                  timeout: 10m
+                  spec:
+                    deleteSourceBranch: true
+              - step:
+                  name: Fetch Linked Apps (Production)
+                  identifier: fetch_linked_apps_prod
+                  type: GitOpsFetchLinkedApps
+                  timeout: 10m
+              - step:
+                  name: Sync GitOps App (Production)
+                  identifier: gitops_sync_prod
+                  type: GitOpsSync
+                  timeout: 20m
+                  spec:
+                    waitForSteadyState: true
