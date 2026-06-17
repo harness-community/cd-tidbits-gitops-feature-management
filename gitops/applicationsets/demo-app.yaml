@@ -17,7 +17,7 @@ spec:
           - env: dev
             cluster: dev-cluster
             server: https://dev-k8s.example.com   # replace with real dev API endpoint
-          - env: production
+          - env: prod
             cluster: prod-cluster
             server: https://prod-k8s.example.com  # replace with real prod API endpoint
 

@@ -13,8 +13,10 @@ replicas:
 
 # Image tag is updated here by the Harness CI pipeline after a successful build.
 # Do not edit manually — the pipeline owns this value.
+# Image name must match imagePath in .harness/service.yaml and
+# the repo: field in the CI BuildAndPushDockerRegistry step (w_inc_docker).
 images:
-  - name: docker.io/your-org/gitops-demo
+  - name: gitops-example
     newTag: "latest"
 
 patches:

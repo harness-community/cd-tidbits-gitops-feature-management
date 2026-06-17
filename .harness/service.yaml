@@ -1,0 +1,130 @@
+# Harness Service — gitops-demo-service
+#
+# Consumed by both CD stages in pipeline.yaml:
+#   deploy_dev  (environmentRef: dev)  → gitops/overlays/dev/
+#   deploy_prod (environmentRef: prod) → gitops/overlays/prod/
+#
+# IMPORTANT — image name alignment:
+#   The artifact imagePath below ("gitops-example") is the repository name
+#   within the w_inc_docker connector's registry. The GitOpsUpdateReleaseRepo
+#   step constructs the full image reference it searches for in kustomization.yaml
+#   by combining the connector's registry host with this imagePath.
+#
+#   That full reference MUST match the `images[].name` field in both Kustomize
+#   overlays exactly, or the image tag update will silently no-op.
+#
+#   Current alignment:
+#     Pipeline CI  →  registryRef: w_inc_docker  +  repo: gitops-example
+#     Service      →  connectorRef: w_inc_docker  +  imagePath: gitops-example
+#     Overlays     →  images[].name: gitops-example  (no registry prefix —
+#                     Kustomize treats registryless names as docker.io implicitly)
+#
+# Remaining placeholder:
+#   REPLACE_GITHUB_CONNECTOR : Harness GitHub connector ID with read/write
+#                              access to this repository.
+
+service:
+  name: gitops-demo-service
+  identifier: gitops_demo_service
+  orgIdentifier: default
+  projectIdentifier: w_inc
+  description: >
+    Node.js demo application deployed to Kubernetes via Harness GitOps + Argo CD.
+    Kustomize overlays (dev / prod) live in gitops/overlays/ in the same repo.
+  tags:
+    app: gitops-demo
+    managed-by: harness-gitops
+
+  serviceDefinition:
+    type: Kubernetes
+    spec:
+
+      # ───────────────────────────────────────────────────────────
+      # Artifact
+      # The CI stage (build_and_push) pushes to the w_inc_docker
+      # registry using repo: gitops-example, tagging with
+      # <+pipeline.sequenceId> and exposing it as IMAGE_TAG.
+      # The tag is <+input> here so the pipeline's runtime
+      # serviceInputs block can inject the sequenceId per-run.
+      # ───────────────────────────────────────────────────────────
+      artifacts:
+        primary:
+          primaryArtifactRef: primary
+          sources:
+            - identifier: primary
+              type: DockerRegistry
+              spec:
+                # Matches registryRef: w_inc_docker in the CI BuildAndPushDockerRegistry step
+                connectorRef: w_inc_docker
+                # Matches repo: gitops-example in the CI step.
+                # Do NOT include a registry prefix here — the connector carries it.
+                imagePath: gitops-example
+                tag: <+input>
+
+      # ───────────────────────────────────────────────────────────
+      # Manifests
+      # <+env.identifier> resolves at pipeline execution time to the
+      # environment's identifier string, mapping directly to the
+      # Kustomize overlay directories:
+      #
+      #   dev   → gitops/overlays/dev/   (environmentRef: dev)
+      #   prod  → gitops/overlays/prod/  (environmentRef: prod)
+      #
+      # GitOpsUpdateReleaseRepo uses this path to locate the
+      # kustomization.yaml it should patch:
+      #
+      #   images:
+      #     - name: gitops-example
+      #       newTag: "<IMAGE_TAG from the pipeline step>"
+      #
+      # Argo CD detects the committed change and reconciles the
+      # target cluster automatically.
+      # ───────────────────────────────────────────────────────────
+      manifests:
+        - manifest:
+            identifier: gitops_kustomize_manifests
+            type: Kustomize
+            spec:
+              store:
+                type: Github
+                spec:
+                  connectorRef: REPLACE_GITHUB_CONNECTOR
+                  gitFetchType: Branch
+                  branch: main
+                  # Matches codebase.repoName in pipeline.yaml (no org prefix —
+                  # the GitHub connector is account-scoped)
+                  repoName: gitops-example
+                  # Resolves per-environment at pipeline execution time:
+                  #   dev  → gitops/overlays/dev
+                  #   prod → gitops/overlays/prod
+                  folderPath: gitops/overlays/<+env.identifier>
+              # Standard Kustomize overlays — no external plugin needed
+              pluginPath: ""
+              skipResourceVersioning: false
+
+      # ───────────────────────────────────────────────────────────
+      # Service variables
+      # Referenceable anywhere in the pipeline as
+      # <+serviceVariables.<name>>.
+      # ───────────────────────────────────────────────────────────
+      variables:
+        - name: imageRepository
+          type: String
+          description: >
+            Repository name within the w_inc_docker registry.
+            Matches the CI step's repo: field and the kustomize images[].name.
+          value: gitops-example
+
+        - name: kustomizeOverlaysPath
+          type: String
+          description: >
+            Root path to the Kustomize overlays in this repo.
+            Used by promote.sh and can be referenced in pipeline notifications.
+          value: gitops/overlays
+
+        - name: containerPort
+          type: String
+          description: >
+            Port the application listens on. Matches Dockerfile EXPOSE and
+            base/deployment.yaml containerPort.
+          value: "3000"

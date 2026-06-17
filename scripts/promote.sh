@@ -20,14 +20,15 @@ if [[ -z "${IMAGE_TAG}" ]]; then
 fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROD_KUSTOMIZATION="${REPO_ROOT}/gitops/overlays/production/kustomization.yaml"
-PROD_ENV_PATCH="${REPO_ROOT}/gitops/overlays/production/env-patch.yaml"
+PROD_KUSTOMIZATION="${REPO_ROOT}/gitops/overlays/prod/kustomization.yaml"
+PROD_ENV_PATCH="${REPO_ROOT}/gitops/overlays/prod/env-patch.yaml"
 
-echo "→ Promoting gitops-demo:${IMAGE_TAG} to production"
+echo "→ Promoting gitops-example:${IMAGE_TAG} to prod"
 
-# Update the image tag in the production kustomization
-cd "${REPO_ROOT}/gitops/overlays/production"
-kustomize edit set image "docker.io/your-org/gitops-demo:${IMAGE_TAG}"
+# Update the image tag in the prod kustomization.
+# Image name matches imagePath in .harness/service.yaml (gitops-example).
+cd "${REPO_ROOT}/gitops/overlays/prod"
+kustomize edit set image "gitops-example:${IMAGE_TAG}"
 
 # Also keep APP_VERSION env var in sync so the app reports the right version
 sed -i.bak "s/value: \".*\"  # Kept in sync/value: \"${IMAGE_TAG}\"  # Kept in sync/" \
@@ -35,15 +36,15 @@ sed -i.bak "s/value: \".*\"  # Kept in sync/value: \"${IMAGE_TAG}\"  # Kept in s
 
 echo "→ Staging changes"
 git -C "${REPO_ROOT}" add \
-  gitops/overlays/production/kustomization.yaml \
-  gitops/overlays/production/env-patch.yaml
+  gitops/overlays/prod/kustomization.yaml \
+  gitops/overlays/prod/env-patch.yaml
 
 echo "→ Committing"
-git -C "${REPO_ROOT}" commit -m "chore(prod): promote gitops-demo to ${IMAGE_TAG}"
+git -C "${REPO_ROOT}" commit -m "chore(prod): promote gitops-example to ${IMAGE_TAG}"
 
 echo "→ Pushing"
 git -C "${REPO_ROOT}" push origin HEAD
 
 echo ""
-echo "Done. Argo CD will detect the change and sync production automatically."
-echo "Monitor the sync at: Harness → GitOps → Applications → gitops-demo-production"
+echo "Done. Argo CD will detect the change and sync prod automatically."
+echo "Monitor the sync at: Harness → GitOps → Applications → gitops-demo-prod"

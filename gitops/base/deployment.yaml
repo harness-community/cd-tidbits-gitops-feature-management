@@ -17,8 +17,10 @@ spec:
     spec:
       containers:
         - name: gitops-demo
-          # Image tag is overridden per-environment via Kustomize
-          image: docker.io/your-org/gitops-demo:latest
+          # Image tag is overridden per-environment via Kustomize.
+          # Base name must match images[].name in each overlay's kustomization.yaml
+          # and imagePath in .harness/service.yaml.
+          image: gitops-example:latest
           ports:
             - containerPort: 3000
           env:
