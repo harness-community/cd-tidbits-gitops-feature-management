@@ -1,2 +1,4 @@
+.DS_Store
+app/node_modules
 .claude/
 VIDEO_SCRIPT.md
